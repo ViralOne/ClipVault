@@ -6,7 +6,10 @@ import ClipVaultKit
 @MainActor
 final class PickerModel: ObservableObject {
     @Published var query = "" {
-        didSet { selection = filtered.first?.id }
+        didSet {
+            guard query != oldValue else { return }
+            selection = filtered.first?.id
+        }
     }
     @Published var selection: UUID?
     @Published var isBusy = false
@@ -21,6 +24,8 @@ final class PickerModel: ObservableObject {
         self.store = store
         storeObserver = store.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+            // Keep a valid selection when items are added or pruned.
+            DispatchQueue.main.async { self?.selectFirstIfNeeded() }
         }
     }
 
@@ -249,8 +254,12 @@ final class PickerController {
     }
 
     private func rememberPreviousApp() {
+        // Opened from ClipVault itself: there is no other app to paste into.
         guard let front = NSWorkspace.shared.frontmostApplication,
-              front.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+              front.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            previousApp = nil
+            return
+        }
         previousApp = front
     }
 

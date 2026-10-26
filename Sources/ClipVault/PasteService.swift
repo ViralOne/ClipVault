@@ -40,6 +40,10 @@ enum ClipAccess {
         }
 
         let kind = item.displayKind ?? "secret"
+        guard Biometrics.canAuthenticate else {
+            HUD.show("Set a login password or Touch ID to open secrets", symbol: "exclamationmark.triangle.fill")
+            return nil
+        }
         guard let context = await Biometrics.authenticate(reason: "\(verb) \(kind.lowercased()) from ClipVault", scope: item.id) else {
             return nil
         }
@@ -80,14 +84,27 @@ enum PasteService {
             HUD.show("Copied — allow Accessibility to paste automatically", symbol: "exclamationmark.triangle.fill")
             return
         }
-        guard let app, app.bundleIdentifier != Bundle.main.bundleIdentifier else {
+        guard let app, !app.isTerminated, app.bundleIdentifier != Bundle.main.bundleIdentifier else {
             HUD.show("Copied")
             return
         }
 
         app.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            sendCommandV()
+        pasteWhenFrontmost(app, attempts: 10)
+    }
+
+    /// Presses ⌘V only once the intended app is really in front, so content
+    /// never lands in a different app. Gives up after about a second.
+    private static func pasteWhenFrontmost(_ app: NSRunningApplication, attempts: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
+                // A short pause lets the app's key window settle.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { sendCommandV() }
+            } else if attempts > 1 {
+                pasteWhenFrontmost(app, attempts: attempts - 1)
+            } else {
+                HUD.show("Copied — the app you were using isn't in front")
+            }
         }
     }
 

@@ -168,7 +168,7 @@ struct AboutView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         feature("clock.arrow.circlepath", "Search and paste anything you copied with \(HotKeyPrefs.load().display).")
                         feature("text.viewfinder", "Text inside screenshots and images is read on device, and searchable.")
-                        feature("key.fill", "60+ token formats are detected and concealed the moment you copy them.")
+                        feature("key.fill", "600+ token formats are detected and concealed the moment you copy them.")
                         feature("lock.shield.fill", "Secrets are sealed by the Secure Enclave and need Touch ID to open.")
                         feature("arrow.up.arrow.down", "Drag to reorder, pin what matters, change the shortcut.")
                         feature("network.slash", "Runs entirely on this Mac. No account, sync or telemetry.")

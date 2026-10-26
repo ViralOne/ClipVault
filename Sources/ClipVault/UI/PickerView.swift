@@ -227,13 +227,12 @@ struct PickerView: View {
             Button {
                 model.onOpenMain?()
             } label: {
-                Label("Open ClipVault", systemImage: "macwindow")
-                    .font(.system(size: 12))
-                    .lineLimit(1)
-                    .fixedSize()
+                Image(systemName: "macwindow")
+                    .font(.system(size: 13))
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
+            .help("Open ClipVault (⌘O)")
         }
         .padding(.horizontal, 14)
         .frame(height: 38)

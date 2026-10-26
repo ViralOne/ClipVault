@@ -71,6 +71,9 @@ enum AppIconCache {
         let key = bundleID ?? appName ?? ""
         guard !key.isEmpty, !misses.contains(key) else { return nil }
         if let cached = icons[key] { return cached }
+        if bundleID == Bundle.main.bundleIdentifier || appName == "ClipVault" {
+            return NSApp.applicationIconImage
+        }
 
         var url: URL?
         if let bundleID {
@@ -222,6 +225,8 @@ struct ShortcutHint: View {
             Text(label)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
         }
     }
 }

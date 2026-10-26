@@ -6,17 +6,22 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @ObservedObject var store: HistoryStore
     @ObservedObject var monitor: ClipboardMonitor
+    @AppStorage("settingsTab") private var tab = "general"
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             GeneralSettings(monitor: monitor)
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag("general")
             HistorySettings(store: store)
                 .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag("history")
             ProtectionSettings()
                 .tabItem { Label("Protection", systemImage: "key") }
+                .tag("protection")
             PrivacySettings(store: store)
                 .tabItem { Label("Privacy", systemImage: "lock.shield") }
+                .tag("privacy")
         }
         .frame(width: 580, height: 640)
     }
@@ -226,6 +231,7 @@ private struct ProtectionSettings: View {
 
 private struct PrivacySettings: View {
     @ObservedObject var store: HistoryStore
+    @ObservedObject private var vault = SecretVault.shared
 
     @State private var confirmRemoveSecrets = false
     @State private var confirmReset = false
@@ -268,7 +274,7 @@ private struct PrivacySettings: View {
                     }
                     .disabled(!FileManager.default.fileExists(atPath: store.fileURL.path))
                 }
-                Text(store.directory.path)
+                Text((store.directory.path as NSString).abbreviatingWithTildeInPath)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)

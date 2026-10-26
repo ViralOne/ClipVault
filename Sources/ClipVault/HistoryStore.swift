@@ -122,11 +122,12 @@ final class HistoryStore: ObservableObject {
         bundleID: String?,
         width: Int,
         height: Int
-    ) -> UUID? {
+    ) -> (id: UUID, isNew: Bool)? {
+        // A repeated image keeps its earlier OCR result and seal.
         if let index = items.firstIndex(where: { $0.imageHash == hash }) {
             refresh(index, sourceApp: sourceApp, bundleID: bundleID)
             persist()
-            return items.first { $0.imageHash == hash }?.id
+            return items.first { $0.imageHash == hash }.map { ($0.id, false) }
         }
 
         let itemID = UUID()
@@ -150,13 +151,15 @@ final class HistoryStore: ObservableObject {
         enforceLimit()
         pruneInMemory()
         persist()
-        return itemID
+        return (itemID, true)
     }
 
     /// Attaches OCR output. When the recognised text is a secret, both the text
     /// and the image bytes are sealed to the Secure Enclave.
     func attachImageInsight(id: UUID, ocrText: String?, secretKind: String?, imageData: Data?) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        // Never downgrade an item that is already secret or sealed.
+        guard !items[index].isSecret, !items[index].isSealed, !items[index].imageSealed else { return }
         items[index].ocrText = ocrText
         items[index].ocrSecretKind = secretKind
         if secretKind != nil {
@@ -190,7 +193,7 @@ final class HistoryStore: ObservableObject {
         var text: String?
         if let envelope = item.sealedSecret {
             guard vault.isAvailable else { throw UnsealError.unavailable }
-            text = String(decoding: try vault.open(envelope, context: context), as: UTF8.self)
+            text = String(decoding: try openSealed(envelope, vault: vault, context: context), as: UTF8.self)
         } else {
             text = item.isImage ? item.ocrText : item.text
         }
@@ -200,7 +203,7 @@ final class HistoryStore: ObservableObject {
             guard let stored = ImageStore.shared.data(filename: filename) else { throw VaultError.corruptCiphertext }
             if item.imageSealed {
                 guard vault.isAvailable else { throw UnsealError.unavailable }
-                imageData = try vault.open(stored, context: context)
+                imageData = try openSealed(stored, vault: vault, context: context)
             } else {
                 imageData = stored
             }
@@ -212,6 +215,15 @@ final class HistoryStore: ObservableObject {
             uti: item.isImage ? (item.imageUTI ?? "public.png") : "public.utf8-plain-text",
             isSecret: true
         )
+    }
+
+    /// A sealed value that no longer opens was sealed to an earlier key.
+    private func openSealed(_ envelope: Data, vault: SecretVault, context: LAContext) throws -> Data {
+        do {
+            return try vault.open(envelope, context: context)
+        } catch SecretEnvelopeError.authenticationFailed, SecretEnvelopeError.malformed {
+            throw UnsealError.unavailable
+        }
     }
 
     // MARK: - Ordering
@@ -295,6 +307,7 @@ final class HistoryStore: ObservableObject {
     /// from a key or file that can no longer be read.
     func resetVault() {
         flush()
+        VaultCrypto.shared.resetKey()
         try? FileManager.default.removeItem(at: fileURL)
         ImageStore.shared.deleteAll()
         items.removeAll()
@@ -303,6 +316,23 @@ final class HistoryStore: ObservableObject {
     }
 
     // MARK: - Persistence
+
+    /// Retries a load that failed because the Keychain was still locked, for
+    /// example right after login. Items captured meanwhile are kept.
+    func retryLoadIfNeeded() {
+        guard isEphemeral,
+              FileManager.default.fileExists(atPath: fileURL.path),
+              let ciphertext = try? Data(contentsOf: fileURL),
+              let plaintext = try? VaultCrypto.shared.open(ciphertext),
+              let decoded = try? JSONDecoder.vault.decode([HistoryItem].self, from: plaintext) else { return }
+        let captured = items
+        let merged = captured + decoded.filter { old in !captured.contains { $0.id == old.id } }
+        items = merged.filter(\.pinned) + merged.filter { !$0.pinned }
+        isEphemeral = false
+        lastError = nil
+        sealUnsealedSecrets()
+        persist()
+    }
 
     private func load() {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
@@ -328,6 +358,9 @@ final class HistoryStore: ObservableObject {
                 let sealed = try VaultCrypto.shared.seal(data)
                 try sealed.write(to: url, options: [.atomic])
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                Task { @MainActor in
+                    if self?.lastError?.hasPrefix("Could not save") == true { self?.lastError = nil }
+                }
             } catch {
                 Task { @MainActor in
                     self?.lastError = "Could not save history: \(error.localizedDescription)"

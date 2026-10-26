@@ -28,6 +28,20 @@ final class AppServices {
         monitor.start()
         applyHotKey()
 
+        // A Keychain that was still locked at launch (right after login)
+        // becomes readable later; pick the history and key up then.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in AppServices.shared.retryLockedKeychain() }
+            })
+        }
+        observers.append(DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in AppServices.shared.retryLockedKeychain() }
+        })
+
         // Every window — including Settings and the menu bar window, which
         // SwiftUI creates — follows the screen-capture preference.
         observers.append(NotificationCenter.default.addObserver(
@@ -39,6 +53,11 @@ final class AppServices {
                 if let window = note.object as? NSWindow { AppServices.shared.applyCapturePolicy(to: window) }
             }
         })
+    }
+
+    func retryLockedKeychain() {
+        SecretVault.shared.retryIfUnavailable()
+        store.retryLoadIfNeeded()
     }
 
     func stop() {
@@ -75,7 +94,7 @@ final class AppServices {
     /// The main window is owned by AppKit rather than a SwiftUI `Window` scene
     /// so `open`, a menu action and the `clipvault://main` URL all reliably show
     /// the same window, including after it has been closed.
-    func showMainWindow() {
+    func showMainWindow(scope: HistoryScope = .all, selectionIndex: Int = 0) {
         if let mainWindow {
             mainWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -91,7 +110,12 @@ final class AppServices {
         window.title = "ClipVault"
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unified
-        window.contentView = NSHostingView(rootView: MainView(store: store, monitor: monitor))
+        window.contentView = NSHostingView(rootView: MainView(
+            store: store,
+            monitor: monitor,
+            initialScope: scope,
+            initialSelectionIndex: selectionIndex
+        ))
         window.contentMinSize = NSSize(width: 940, height: 560)
         window.isReleasedWhenClosed = false
         window.isRestorable = false
@@ -104,7 +128,7 @@ final class AppServices {
         mainWindow = window
     }
 
-    func showOnboarding() {
+    func showOnboarding(initialPage: Int = 0) {
         if let onboardingWindow {
             onboardingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -121,7 +145,7 @@ final class AppServices {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: OnboardingView(store: store, monitor: monitor) { [weak self] in
+        window.contentView = NSHostingView(rootView: OnboardingView(store: store, monitor: monitor, initialPage: initialPage) { [weak self] in
             self?.onboardingWindow?.close()
             self?.onboardingWindow = nil
             self?.showMainWindow()

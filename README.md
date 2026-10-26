@@ -28,13 +28,24 @@ Enclave**, so it can only be opened with Touch ID or your password.
 Everything happens on your Mac. ClipVault runs in the App Sandbox without a
 network entitlement, so the kernel refuses any connection it might try to make.
 
+<p align="center">
+  <img src="docs/screenshots/picker.png" width="720" alt="The ClipVault picker">
+</p>
+
+| Secrets stay sealed | Text read from images | History window |
+| --- | --- | --- |
+| ![Secret in the picker](docs/screenshots/picker-secret.png) | ![Image in the picker](docs/screenshots/picker-image.png) | ![History window](docs/screenshots/window.png) |
+
+More in [`docs/screenshots`](docs/screenshots): dark mode, menu bar, settings and
+the welcome guide. All screenshots use invented sample data.
+
 ## Highlights
 
 | | |
 | --- | --- |
 | **Instant picker** | ⌃⌘V opens a Spotlight-style panel over the current app: search, preview, paste. ⌘1–9 pastes one of the first nine items. |
 | **Text in images** | Screenshots and copied images are read with on-device Vision OCR as they arrive. The text is searchable and copyable. |
-| **Secret detection** | 60+ published token formats (AWS, GitHub, OpenAI, Anthropic, Stripe, Slack, private keys, connection strings …), credential assignments and a high-entropy fallback. Secrets in screenshots are caught too. |
+| **Secret detection** | 600+ published token formats across cloud, developer tools, AI, databases, payments, messaging and SaaS, plus private keys, wallets, credentials in URLs and connection strings, credential assignments and a high-entropy fallback. Secrets in screenshots are caught too. |
 | **Secure Enclave seal** | Secret values are encrypted to a key that lives in the Secure Enclave and needs Touch ID or your login password for every use. |
 | **Concealed clipboard** | Secrets are re-marked with the `org.nspasteboard.org` Concealed type that Raycast, Alfred, Paste, Maccy and 1Password honor, then cleared automatically. |
 | **Your order** | Pin items, drag them around, or move them with ⌘↑/⌘↓ in the picker. Pinned items stay on top. |
@@ -103,7 +114,8 @@ it and you press ⌘V yourself.
 
 ### Menu bar
 
-Click the menu bar icon for recording status, a quick search over recent items,
+Click the menu bar icon (the app's clipboard-and-dial glyph; pause bars while
+paused) for recording status, a quick search over recent items,
 **Conceal clipboard now** (re-marks whatever is on the clipboard as a secret),
 pause, settings and quit.
 
@@ -157,6 +169,12 @@ enough to read a secret.
    authenticated context is handed to the Secure Enclave, which performs the
    key agreement; the plaintext lives in memory only while it is shown (30 s)
    or being pasted, and the paste is concealed and auto-cleared again.
+5. An unlock covers only that one secret, for up to 60 seconds, so revealing
+   and then pasting it asks once. Any other secret asks again. Sleep, screen
+   lock or the screen saver end the unlock and hide anything revealed.
+6. A secret is pasted only into the app you were using, and only once that app
+   is in front; otherwise it is just copied. Quitting ClipVault clears a secret
+   that is still waiting to be auto-cleared.
 
 Images whose recognised text is a secret get the same treatment: the OCR text
 and the image bytes are both sealed, and the preview stays locked.
@@ -221,7 +239,8 @@ tiny or low-contrast text may be missed.
 Sources/
   ClipVaultKit/             Testable core
     HistoryItem.swift       Model, display rules and search filter
-    SecretDetector.swift    Token formats, assignments, entropy, masking
+    SecretDetector.swift    Matching, assignments, entropy, masking
+    SecretPatterns*.swift   600+ formats: core, cloud, developer, AI/data, SaaS, keys
     SecretEnvelope.swift    ECIES envelope and keyed digest
     VaultCrypto.swift       Vault key and Keychain access
     OCRService.swift        Vision text recognition
@@ -246,7 +265,7 @@ Support/                    Info.plist, entitlements, AppIcon.icns
 
 ```bash
 swift build            # debug build of the app and the kit
-swift test             # 40+ unit tests, including OCR and the Secure Enclave
+swift test             # 50 tests: every secret format has a sample, plus a false-positive corpus
 ./Scripts/make-icon.sh # regenerate Support/AppIcon.icns
 ```
 

@@ -13,6 +13,15 @@ final class RevealState: ObservableObject {
     @Published private(set) var revealed: [UUID: ClipPayload] = [:]
     @Published private(set) var authenticatingID: UUID?
     private var timers: [UUID: DispatchWorkItem] = [:]
+    private var lockObserver: NSObjectProtocol?
+
+    init() {
+        lockObserver = NotificationCenter.default.addObserver(
+            forName: Biometrics.didLockNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.hideAll() }
+        }
+    }
 
     var isAuthenticating: Bool { authenticatingID != nil }
 
@@ -129,6 +138,9 @@ struct SecretPanel: View {
         if payload != nil {
             return "Hides again in \(Int(RevealState.revealSeconds)) seconds."
         }
+        if compact {
+            return "Touch ID to reveal or paste. Pastes concealed, so other clipboard managers skip it."
+        }
         let seal = item.isSealed
             ? "Sealed by the Secure Enclave — it can't be decrypted without you."
             : "Encrypted at rest."
@@ -176,6 +188,7 @@ struct ImagePreview: View {
     let store: HistoryStore
 
     @State private var image: NSImage?
+    @State private var loaded = false
 
     var body: some View {
         ScrollView {
@@ -189,6 +202,11 @@ struct ImagePreview: View {
                             .scaledToFit()
                             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                             .padding(10)
+                    } else if loaded {
+                        Label("Image unavailable", systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .padding(30)
                     } else {
                         ProgressView().controlSize(.small).padding(30)
                     }
@@ -226,6 +244,7 @@ struct ImagePreview: View {
         }
         .task(id: item.id) {
             image = store.imageData(for: item).flatMap(NSImage.init(data:))
+            loaded = true
         }
     }
 }

@@ -122,6 +122,15 @@ public final class VaultCrypto {
         return key
     }
 
+    /// Deletes the Keychain key. Everything sealed with it becomes unreadable;
+    /// the next seal creates a new key.
+    public func resetKey() {
+        lock.lock()
+        cachedKey = nil
+        Keychain.delete(service: service, account: account)
+        lock.unlock()
+    }
+
     public func seal(_ plaintext: Data) throws -> Data {
         let key = try encryptionKey()
         guard let combined = try AES.GCM.seal(plaintext, using: key).combined else {

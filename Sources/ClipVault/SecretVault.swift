@@ -12,7 +12,7 @@ import ClipVaultKit
 /// items alone. The Keychain only stores the key's opaque, device-bound handle.
 /// Sealing uses the public key and never prompts.
 @MainActor
-final class SecretVault {
+final class SecretVault: ObservableObject {
     static let shared = SecretVault()
 
     enum Status: Equatable {
@@ -20,7 +20,7 @@ final class SecretVault {
         case unavailable(String)
     }
 
-    private(set) var status: Status = .unavailable("Not loaded")
+    @Published private(set) var status: Status = .unavailable("Not loaded")
     private var publicKey: P256.KeyAgreement.PublicKey?
     private var keyHandle: Data?
 
@@ -103,8 +103,15 @@ final class SecretVault {
         return try SecretEnvelope.open(envelope, with: key)
     }
 
+    /// Loads the key again if the Keychain was locked at launch.
+    func retryIfUnavailable() {
+        guard !isAvailable else { return }
+        load()
+    }
+
     /// Deletes the key handle. Every secret sealed to it becomes unreadable.
     func reset() {
+        Biometrics.endSession()
         Keychain.delete(service: service, account: account)
         publicKey = nil
         keyHandle = nil
@@ -151,6 +158,10 @@ enum Biometrics {
             return nil
         }
         session = (context, scope, Date().addingTimeInterval(sessionSeconds))
+        // Invalidate the context itself when the unlock expires.
+        DispatchQueue.main.asyncAfter(deadline: .now() + sessionSeconds) {
+            if session?.context === context { endSession() }
+        }
         return context
     }
 
@@ -164,14 +175,22 @@ enum Biometrics {
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { _ in
-                Task { @MainActor in endSession() }
+                Task { @MainActor in lockedOrAsleep() }
             })
         }
         let distributed = DistributedNotificationCenter.default()
         for name in ["com.apple.screenIsLocked", "com.apple.screensaver.didstart"] {
             observers.append(distributed.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { _ in
-                Task { @MainActor in endSession() }
+                Task { @MainActor in lockedOrAsleep() }
             })
         }
+    }
+
+    static let didLockNotification = Notification.Name("ClipVaultDidLock")
+
+    /// Ends the unlock and tells views to hide anything revealed.
+    private static func lockedOrAsleep() {
+        endSession()
+        NotificationCenter.default.post(name: didLockNotification, object: nil)
     }
 }

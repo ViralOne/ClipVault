@@ -36,6 +36,7 @@ final class ClipboardMonitor: ObservableObject {
     private var timer: Timer?
     private var lastChangeCount: Int
     private var clearWork: DispatchWorkItem?
+    private var pendingClearCount: Int?
     private let pollInterval: TimeInterval = 0.25
 
     init(store: HistoryStore) {
@@ -56,6 +57,11 @@ final class ClipboardMonitor: ObservableObject {
     func stop() {
         timer?.invalidate()
         timer = nil
+        // Quitting must not leave a secret behind: clear it now.
+        if clearWork != nil, let pending = pendingClearCount,
+           NSPasteboard.general.changeCount == pending {
+            NSPasteboard.general.clearContents()
+        }
         clearWork?.cancel()
         clearWork = nil
     }
@@ -221,18 +227,25 @@ final class ClipboardMonitor: ObservableObject {
             characterCount: original.count,
             isImage: true
         )
-        guard Prefs.bool(Prefs.keepHistory), !source.isIgnored else { return }
         guard let processed = normalizedImage(original) else { return }
-        guard let itemID = store.addImage(
-            processed.data,
-            hash: processed.hash,
-            uti: processed.uti,
-            sourceApp: source.name,
-            bundleID: source.bundleID,
-            width: processed.width,
-            height: processed.height
-        ) else {
-            return
+
+        // Secret screenshots are concealed even when nothing is recorded.
+        var itemID: UUID?
+        if Prefs.bool(Prefs.keepHistory) && !source.isIgnored {
+            guard let added = store.addImage(
+                processed.data,
+                hash: processed.hash,
+                uti: processed.uti,
+                sourceApp: source.name,
+                bundleID: source.bundleID,
+                width: processed.width,
+                height: processed.height
+            ) else {
+                return
+            }
+            // A repeated image was already read; keep its result and seal.
+            guard added.isNew else { return }
+            itemID = added.id
         }
 
         // Live OCR: the item appears immediately, its searchable text is
@@ -263,12 +276,13 @@ final class ClipboardMonitor: ObservableObject {
                 }
 
                 // "Keep secrets" also applies to text found inside images.
-                if !Prefs.bool(Prefs.keepSecrets) {
+                if !Prefs.bool(Prefs.keepSecrets), let itemID {
                     self.store.delete(itemID)
                     return
                 }
             }
 
+            guard let itemID else { return }
             self.store.attachImageInsight(
                 id: itemID,
                 ocrText: capped.isEmpty ? nil : capped,
@@ -340,8 +354,10 @@ final class ClipboardMonitor: ObservableObject {
         let seconds = Prefs.int(Prefs.clearSecretsSeconds)
         guard seconds > 0 else { return }
 
+        pendingClearCount = changeCount
         let work = DispatchWorkItem { [weak self] in
             Task { @MainActor in
+                self?.pendingClearCount = nil
                 let pasteboard = NSPasteboard.general
                 guard pasteboard.changeCount == changeCount else { return }
                 pasteboard.clearContents()

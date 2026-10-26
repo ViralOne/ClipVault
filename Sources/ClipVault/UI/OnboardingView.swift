@@ -7,6 +7,7 @@ import ClipVaultKit
 struct OnboardingView: View {
     @ObservedObject var store: HistoryStore
     @ObservedObject var monitor: ClipboardMonitor
+    var initialPage = 0
     var onFinish: () -> Void
 
     @State private var page = 0
@@ -62,6 +63,7 @@ struct OnboardingView: View {
             .padding(.vertical, 16)
         }
         .frame(width: 620, height: 640)
+        .onAppear { page = initialPage }
     }
 
     private func go(_ delta: Int) {

@@ -37,9 +37,23 @@ public enum SecretDetector {
         let sample = text.count > 200_000 ? String(text.prefix(200_000)) : text
         guard sample.utf8.count >= 8 else { return nil }
         let fullRange = NSRange(sample.startIndex..., in: sample)
+        // Keywords are a cheap pre-filter: a pattern's regex only runs when
+        // the text contains one of them.
+        // Literal NSString search, each distinct keyword checked once.
+        let lowered = sample.lowercased() as NSString
+        var seen: [String: Bool] = [:]
+        func contains(_ keyword: String) -> Bool {
+            if let known = seen[keyword] { return known }
+            let found = lowered.range(of: keyword, options: .literal).location != NSNotFound
+            seen[keyword] = found
+            return found
+        }
 
-        for pattern in compiledPatterns where pattern.regex.firstMatch(in: sample, options: [], range: fullRange) != nil {
-            return SecretMatch(kind: pattern.kind, confidence: pattern.confidence)
+        for pattern in compiledPatterns {
+            if !pattern.keywords.isEmpty, !pattern.keywords.contains(where: contains) { continue }
+            if pattern.regex.firstMatch(in: sample, options: [], range: fullRange) != nil {
+                return SecretMatch(kind: pattern.kind, confidence: pattern.confidence)
+            }
         }
 
         if let kind = assignmentKind(in: sample) {
@@ -87,114 +101,37 @@ public enum SecretDetector {
 
     // MARK: - Token formats
 
-    private struct Definition {
-        let kind: String
-        let pattern: String
-        let confidence: SecretMatch.Confidence
-
-        init(_ kind: String, _ pattern: String, _ confidence: SecretMatch.Confidence = .high) {
-            self.kind = kind
-            self.pattern = pattern
-            self.confidence = confidence
-        }
-    }
-
     private struct CompiledPattern {
         let kind: String
         let regex: NSRegularExpression
+        let keywords: [String]
         let confidence: SecretMatch.Confidence
     }
 
-    private static let definitions: [Definition] = [
-        // Keys and certificates
-        Definition("Private key", #"-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----"#),
-        Definition("Age secret key", #"\bAGE-SECRET-KEY-1[0-9A-Z]{58}\b"#),
-        Definition("JWT", #"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"#),
-
-        // AI providers
-        Definition("Anthropic API key", #"\bsk-ant-[A-Za-z0-9_-]{20,}\b"#),
-        Definition("OpenAI API key", #"\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}\b"#),
-        Definition("Groq API key", #"\bgsk_[A-Za-z0-9]{30,}\b"#),
-        Definition("xAI API key", #"\bxai-[A-Za-z0-9]{30,}\b"#),
-        Definition("Replicate token", #"\br8_[A-Za-z0-9]{30,}\b"#),
-        Definition("Hugging Face token", #"\bhf_[A-Za-z0-9]{30,}\b"#),
-        Definition("Pinecone API key", #"\bpcsk_[A-Za-z0-9_-]{30,}\b"#),
-
-        // Source control and packages
-        Definition("GitHub token", #"\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{20,255})\b"#),
-        Definition("GitLab token", #"\bglpat-[A-Za-z0-9_-]{20,}\b"#),
-        Definition("npm token", #"\bnpm_[A-Za-z0-9]{36}\b"#),
-        Definition("PyPI token", #"\bpypi-[A-Za-z0-9_-]{40,}\b"#),
-        Definition("Docker access token", #"\bdckr_pat_[A-Za-z0-9_-]{20,}\b"#),
-        Definition("Airtable token", #"\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b"#),
-
-        // Cloud
-        Definition("AWS access key", #"\b(?:AKIA|ASIA|ABIA|ACCA|AGPA|AIDA|AIPA|ANPA|ANVA|APKA|AROA|ASCA)[A-Z0-9]{16}\b"#),
-        Definition("AWS secret key", #"(?i)aws_?secret_?access_?key["']?\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}"#),
-        Definition("Google API key", #"\bAIza[0-9A-Za-z_-]{35}\b"#),
-        Definition("Google OAuth secret", #"\bGOCSPX-[A-Za-z0-9_-]{20,}\b"#),
-        Definition("Cloudflare API token", #"(?i)(?:cloudflare|cf)[_-]?(?:api[_-]?)?(?:token|key)["']?\s*[:=]\s*["']?[A-Za-z0-9_-]{40}"#),
-        Definition("DigitalOcean token", #"\bdop_v1_[a-f0-9]{64}\b"#),
-        Definition("Vercel token", #"\bvercel_[A-Za-z0-9]{24,}\b"#),
-        Definition("Netlify token", #"\bnfp_[A-Za-z0-9]{36,}\b"#),
-        Definition("Supabase service key", #"\bsbp_[a-f0-9]{40}\b"#),
-        Definition("Azure storage key", #"(?i)\b(?:AccountKey|SharedAccessKey)\s*=\s*[A-Za-z0-9+/=]{60,}"#),
-        Definition("Firebase server key", #"\bAAAA[A-Za-z0-9_-]{7}:APA91b[A-Za-z0-9_-]{80,}\b"#),
-        Definition("Tailscale key", #"\btskey-[a-z]+-[A-Za-z0-9]{20,}\b"#),
-
-        // SaaS and infrastructure
-        Definition("Stripe secret key", #"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b"#),
-        Definition("Stripe webhook secret", #"\bwhsec_[A-Za-z0-9+/=]{20,}\b"#),
-        Definition("Slack token", #"\bxox[abposr]-[A-Za-z0-9-]{10,}\b"#),
-        Definition("Slack webhook", #"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+"#),
-        Definition("Discord bot token", #"\b[MNO][A-Za-z0-9_-]{23,25}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,38}\b"#),
-        Definition("Discord webhook", #"https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]+"#),
-        Definition("Telegram bot token", #"\b\d{8,10}:AA[A-Za-z0-9_-]{30,}\b"#),
-        Definition("Twilio API key", #"\bSK[0-9a-fA-F]{32}\b"#),
-        Definition("SendGrid API key", #"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b"#),
-        Definition("Mailgun API key", #"\bkey-[0-9a-zA-Z]{32}\b"#),
-        Definition("Mailchimp API key", #"\b[0-9a-f]{32}-us\d{1,2}\b"#),
-        Definition("Shopify access token", #"\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}\b"#),
-        Definition("Notion token", #"\b(?:secret_[A-Za-z0-9]{43}|ntn_[A-Za-z0-9]{40,})\b"#),
-        Definition("Linear API key", #"\blin_api_[A-Za-z0-9]{40,}\b"#),
-        Definition("Figma token", #"\bfigd_[A-Za-z0-9_-]{40,}\b"#),
-        Definition("Atlassian token", #"\bATATT3[A-Za-z0-9_\-=]{80,}\b"#),
-        Definition("Sentry auth token", #"\bsntrys_[A-Za-z0-9_\-=]{40,}\b"#),
-        Definition("Postman API key", #"\bPMAK-[a-f0-9]{24,}-[a-f0-9]{24,}\b"#),
-        Definition("Doppler token", #"\bdp\.(?:pt|st|sa|scim)\.[A-Za-z0-9]{40,}\b"#),
-        Definition("HashiCorp Vault token", #"\b(?:hvs|hvb|hvr)\.[A-Za-z0-9_-]{20,}\b"#),
-        Definition("Databricks token", #"\bdapi[a-f0-9]{32}(?:-\d+)?\b"#),
-        Definition("Contentful token", #"\bCFPAT-[A-Za-z0-9_-]{40,}\b"#),
-        Definition("Pulumi token", #"\bpul-[a-f0-9]{40}\b"#),
-        Definition("Resend API key", #"\bre_[A-Za-z0-9]{20,}\b"#),
-        Definition("Polar access token", #"\bpolar_(?:oat|sk|at)_[A-Za-z0-9]{20,}\b"#),
-        Definition("Paddle API key", #"\bpdl_live_[A-Za-z0-9_]{20,}\b"#),
-
-        // Data stores and headers
-        Definition("MongoDB connection string", #"\bmongodb(?:\+srv)?://[^\s"'<>]+:[^\s"'<>@]+@[^\s"'<>]+"#),
-        Definition("Database URL", #"\b(?:postgres(?:ql)?|mysql|mariadb|redis|rediss|amqp|amqps)://[^\s:@/"'<>]+:[^\s@/"'<>]+@[^\s"'<>]+"#),
-        Definition("Authorization header", #"(?i)\bauthorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9\-._~+/=]{10,}"#),
-
-        // Crypto wallets
-        Definition("Ethereum private key", #"\b0x[a-fA-F0-9]{64}\b"#),
-        Definition("Bitcoin private key", #"\b[5KL][1-9A-HJ-NP-Za-km-z]{50,51}\b"#)
-    ]
-
-    private static let compiledPatterns: [CompiledPattern] = definitions.map { definition in
-        // A malformed pattern is a programming error; crash loudly in debug and
-        // skip in release rather than take the app down at runtime.
-        do {
-            let regex = try NSRegularExpression(pattern: definition.pattern)
-            return CompiledPattern(kind: definition.kind, regex: regex, confidence: definition.confidence)
-        } catch {
-            assertionFailure("Invalid secret pattern \(definition.kind): \(error)")
-            return CompiledPattern(
-                kind: definition.kind,
-                regex: try! NSRegularExpression(pattern: "a^"),
-                confidence: definition.confidence
-            )
+    /// Specific formats first, broad ones (generic URLs, bare hex keys) last,
+    /// so the most precise kind wins.
+    private static let compiledPatterns: [CompiledPattern] = {
+        let ordered = SecretPatterns.all.filter { !$0.broad } + SecretPatterns.all.filter(\.broad)
+        return ordered.compactMap { pattern in
+            do {
+                let regex = try NSRegularExpression(pattern: pattern.pattern)
+                return CompiledPattern(
+                    kind: pattern.kind,
+                    regex: regex,
+                    keywords: pattern.keywords.map { $0.lowercased() },
+                    confidence: pattern.confidence
+                )
+            } catch {
+                // A malformed pattern is a programming error; the test suite
+                // compiles every pattern, release builds skip it.
+                assertionFailure("Invalid secret pattern \(pattern.kind): \(error)")
+                return nil
+            }
         }
-    }
+    }()
+
+    /// Number of patterns that compiled. Used by tests.
+    public static var patternCount: Int { compiledPatterns.count }
 
     // MARK: - Key/value assignments
 
@@ -247,6 +184,13 @@ public enum SecretDetector {
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") { return false }
         if lower.hasPrefix("/") || lower.hasPrefix("./") || lower.hasPrefix("~/") { return false }
         if lower.hasPrefix("<") || lower.hasSuffix(">") { return false }
+        // Code, not data: calls, optional chains, subscripts, scopes,
+        // trailing commas and dotted member paths.
+        let codeMarkers = ["(", ")", "?.", "::", "[", "]", "->", "=>"]
+        if codeMarkers.contains(where: value.contains) || value.hasSuffix(",") || value.hasSuffix(";") { return false }
+        if value.range(of: #"^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+$"#, options: .regularExpression) != nil {
+            return false
+        }
 
         // A value must look like data, not a sentence.
         let hasDigit = value.contains(where: { $0.isNumber })
@@ -272,6 +216,9 @@ public enum SecretDetector {
                 else if character.isNumber { hasDigit = true }
             }
             guard hasDigit, hasLower, hasUpper else { continue }
+
+            // Alphabets and digit runs are not keys.
+            if ["abcdefghij", "ABCDEFGHIJ", "0123456789"].contains(where: value.contains) { continue }
 
             // A bare 40-character SHA-1 is almost always a commit id.
             if value.count == 40, value.allSatisfy({ $0.isHexDigit }) { continue }

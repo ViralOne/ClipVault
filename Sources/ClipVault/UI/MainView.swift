@@ -50,6 +50,8 @@ enum HistoryScope: String, CaseIterable, Identifiable {
 struct MainView: View {
     @ObservedObject var store: HistoryStore
     @ObservedObject var monitor: ClipboardMonitor
+    var initialScope: HistoryScope = .all
+    var initialSelectionIndex = 0
     @StateObject private var reveal = RevealState()
 
     @State private var section: MainSection? = .history(.all)
@@ -90,7 +92,14 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 940, minHeight: 560)
-        .onAppear { ensureSelection() }
+        .onAppear {
+            section = .history(initialScope)
+            let items = store.items.filter(initialScope.includes)
+            if items.indices.contains(initialSelectionIndex) {
+                selection = items[initialSelectionIndex].id
+            }
+            ensureSelection()
+        }
         .onChange(of: store.items.count) { _, _ in ensureSelection() }
         .onChange(of: query) { _, _ in ensureSelection() }
         .onChange(of: section) { _, _ in ensureSelection() }

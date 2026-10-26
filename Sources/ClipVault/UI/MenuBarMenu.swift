@@ -165,7 +165,52 @@ struct MenuBarLabel: View {
     @ObservedObject var monitor: ClipboardMonitor
 
     var body: some View {
-        Image(systemName: monitor.isPaused ? "pause.circle" : "lock.doc")
+        Image(nsImage: MenuBarIcon.image(paused: monitor.isPaused))
             .accessibilityLabel(monitor.isPaused ? "ClipVault is paused" : "ClipVault is protecting the clipboard")
+    }
+}
+
+/// The app icon's clipboard-and-vault-dial glyph as a monochrome template
+/// image, so macOS tints it for light, dark and highlighted menu bars.
+enum MenuBarIcon {
+    private static var cache: [Bool: NSImage] = [:]
+
+    static func image(paused: Bool) -> NSImage {
+        if let cached = cache[paused] { return cached }
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
+            NSColor.black.set()
+
+            // Board
+            let board = NSBezierPath(roundedRect: NSRect(x: 3, y: 1.25, width: 12, height: 14.25), xRadius: 2.6, yRadius: 2.6)
+            board.lineWidth = 1.4
+            board.stroke()
+
+            // Clip
+            let clip = NSBezierPath(roundedRect: NSRect(x: 6, y: 13.6, width: 6, height: 3.4), xRadius: 1.3, yRadius: 1.3)
+            clip.fill()
+
+            let center = NSPoint(x: 9, y: 7.4)
+            if paused {
+                NSBezierPath(roundedRect: NSRect(x: 6.9, y: 4.9, width: 1.5, height: 5), xRadius: 0.6, yRadius: 0.6).fill()
+                NSBezierPath(roundedRect: NSRect(x: 9.6, y: 4.9, width: 1.5, height: 5), xRadius: 0.6, yRadius: 0.6).fill()
+            } else {
+                // Dial with four graduations and a keyhole hub.
+                let dial = NSBezierPath(ovalIn: NSRect(x: center.x - 3.6, y: center.y - 3.6, width: 7.2, height: 7.2))
+                dial.lineWidth = 1.3
+                dial.stroke()
+                for angle in stride(from: 0.0, to: 2 * Double.pi, by: Double.pi / 2) {
+                    let tick = NSBezierPath()
+                    tick.move(to: NSPoint(x: center.x + cos(angle) * 1.9, y: center.y + sin(angle) * 1.9))
+                    tick.line(to: NSPoint(x: center.x + cos(angle) * 2.7, y: center.y + sin(angle) * 2.7))
+                    tick.lineWidth = 1
+                    tick.stroke()
+                }
+                NSBezierPath(ovalIn: NSRect(x: center.x - 0.9, y: center.y - 0.9, width: 1.8, height: 1.8)).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        cache[paused] = image
+        return image
     }
 }
