@@ -1,0 +1,12 @@
+.build/
+dist/
+.DS_Store
+*.xcodeproj
+.swiftpm/
+# Local signing configuration and credentials never belong in the repository.
+.signing-identity
+*.p12
+*.cer
+*.mobileprovision
+.env
+.env.*
